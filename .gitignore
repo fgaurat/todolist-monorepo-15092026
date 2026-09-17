@@ -1,6 +1,68 @@
+# ---------------------------------------------------------------------------
+# Monorepo todolist — .gitignore racine (apps/* et packages/*)
+# ---------------------------------------------------------------------------
+
+# Dépendances
 node_modules/
+.pnp
+.pnp.js
+
+# Builds & sorties
 dist/
+dist-ssr/
+build/
+web-build/
+*.tsbuildinfo
+coverage/
+
+# Expo / React Native
 .expo/
-.env.local
+.expo-shared/
+expo-env.d.ts
+.metro-health-check*
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+# Dossiers natifs générés par `expo prebuild`
+apps/*/ios/
+apps/*/android/
+
+# Variables d'environnement (garder les .env.example)
+.env
+.env.*
+!.env.example
+
+# Logs & debug
+logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Caches
+.cache/
+.turbo/
+.vite/
+.vitest/
+.eslintcache
+
+# Éditeurs & IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
 .DS_Store
+Thumbs.db

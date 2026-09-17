@@ -1,3 +1,4 @@
+import { yupResolver } from '@hookform/resolvers/yup'
 import { ValidationError } from 'yup'
 import { NewTodoInputSchema, TodoListSchema, TodoSchema } from './todo'
 
@@ -45,5 +46,23 @@ describe('NewTodoInputSchema', () => {
     expect(() => NewTodoInputSchema.validateSync({ title: 'a'.repeat(121) })).toThrow(
       'Le titre ne doit pas dépasser 120 caractères',
     )
+  })
+})
+
+describe('NewTodoInputSchema + React Hook Form', () => {
+  // Le résolveur est une simple fonction : on peut le tester sans React.
+  const resolve = yupResolver(NewTodoInputSchema)
+  const options = { fields: {}, shouldUseNativeValidation: false }
+
+  it('fournit à React Hook Form la valeur transformée', async () => {
+    const result = await resolve({ title: '  pain  ' }, undefined, options)
+    expect(result.errors).toEqual({})
+    expect(result.values).toEqual({ title: 'pain' })
+  })
+
+  it('fournit à React Hook Form le message du schéma', async () => {
+    const result = await resolve({ title: '' }, undefined, options)
+    expect(result.values).toEqual({})
+    expect(result.errors).toMatchObject({ title: { message: 'Le titre est obligatoire' } })
   })
 })

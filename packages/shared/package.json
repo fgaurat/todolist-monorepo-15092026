@@ -24,6 +24,8 @@
     "vitest": "^4.0.0"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.9.1",
+    "react-hook-form": "^7.88.0",
     "yup": "^1.7.1"
   }
 }

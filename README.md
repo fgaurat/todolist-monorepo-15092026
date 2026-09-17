@@ -112,7 +112,7 @@ monorepo_example/
             ├── schemas/todo.ts
             ├── api/client.ts
             ├── hooks/useTodos.ts
-            ├── hooks/useTodoInput.ts
+            ├── hooks/useTodoForm.ts
             ├── utils/stats.ts
             └── index.ts
 ```
@@ -295,32 +295,44 @@ export function useTodos(api: TodoApi) {
 - `toggle` et `remove` font une **mise à jour optimiste** : l'UI change tout de suite, et on revient
   en arrière si l'API échoue. Cette logique subtile est écrite une seule fois et bénéficie aux deux apps.
 
-### 4.4 `hooks/useTodoInput.ts` : la logique du formulaire
+### 4.4 `hooks/useTodoForm.ts` : la logique du formulaire
 
 ```ts
-export function useTodoInput(onSubmit: (input: NewTodoInput) => Promise<void>) {
-  const [value, setValueState] = useState('')
-  const [error, setError] = useState<string | null>(null)
+import { yupResolver } from '@hookform/resolvers/yup'
+import { useForm } from 'react-hook-form'
 
-  const submit = useCallback(async () => {
-    let input: NewTodoInput
-    try {
-      input = NewTodoInputSchema.validateSync({ title: value })
-    } catch (err) {
-      setError(err instanceof ValidationError ? err.message : 'Saisie invalide')
-      return
-    }
-    await onSubmit(input)
-    setValueState('')
-  }, [value, onSubmit])
+export function useTodoForm(onSubmit: (input: NewTodoInput) => Promise<void>) {
+  const form = useForm<NewTodoInput>({
+    resolver: yupResolver(NewTodoInputSchema),
+    defaultValues: { title: '' },
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
+  })
 
-  return { value, error, setValue, submit }
+  const submit = form.handleSubmit(async (input) => {
+    await onSubmit(input) // input = valeur validée et transformée par yup (titre trimé)
+    form.reset()
+  })
+
+  return { form, submit, error: form.formState.errors.title?.message ?? null }
 }
 ```
 
 **Pourquoi partageable ?** Un formulaire, c'est un état (la valeur tapée), une validation et une
-action de soumission. Rien de tout ça ne dépend du fait que le champ soit un `<input>` HTML ou un
-`<TextInput>` natif. Le hook fait le lien entre le schéma yup (4.1) et le composant (section 5).
+action de soumission. [React Hook Form](https://react-hook-form.com/) gère les trois sans aucune
+dépendance au DOM : `useForm` n'utilise que des hooks React. Le hook partagé le configure une fois
+(schéma yup via `yupResolver`, valeurs par défaut, remise à zéro après envoi) et chaque app n'a plus
+qu'à **brancher son champ** (section 5).
+
+**Ce qui change entre web et mobile**, et qu'il faut expliquer :
+
+- `register('title')` (web) pilote l'`<input>` en **non contrôlé** : React Hook Form pose une `ref`
+  et écoute l'événement DOM `onChange`. Ça n'existe pas dans React Native.
+- `<Controller>` (mobile) pilote le `<TextInput>` en **contrôlé** : il fournit `value`, `onChange`
+  et `onBlur` à brancher à la main. `Controller` marche aussi sur le web, `register` non.
+- `handleSubmit` appelle `preventDefault()` sur l'événement qu'on lui passe. Sur le web on lui
+  transmet donc l'événement du `<form onSubmit>` ; sur mobile il n'y a pas d'événement, on l'appelle
+  à vide. Oublier de transmettre l'événement = rechargement de page et `?title=` dans l'URL.
 
 ### 4.5 `utils/stats.ts` : la logique métier
 
@@ -340,7 +352,7 @@ composants).
 ```bash
 npm test
 #  Test Files  3 passed (3)
-#       Tests  15 passed (15)
+#       Tests  17 passed (17)
 ```
 
 **L'argument massue du partage** : le code partagé se teste **une seule fois**, en Node, en
@@ -372,23 +384,19 @@ Le meilleur moyen de faire comprendre le partage : ouvrir les deux `TodoForm.tsx
 <td>
 
 ```tsx
-import { useTodoInput } from '@todolist/shared'
+import { useTodoForm } from '@todolist/shared'
 
 export function TodoForm({ onSubmit }) {
-  const input = useTodoInput(onSubmit)
+  const { form, submit, error } = useTodoForm(onSubmit)
 
   return (
-    <form onSubmit={(e) => {
-      e.preventDefault()
-      void input.submit()
-    }}>
+    <form onSubmit={submit}>
       <input
         type="text"
-        value={input.value}
-        onChange={(e) => input.setValue(e.target.value)}
+        {...form.register('title')}
       />
       <button type="submit">Ajouter</button>
-      {input.error && <p role="alert">{input.error}</p>}
+      {error && <p role="alert">{error}</p>}
     </form>
   )
 }
@@ -398,22 +406,30 @@ export function TodoForm({ onSubmit }) {
 <td>
 
 ```tsx
-import { useTodoInput } from '@todolist/shared'
+import { useTodoForm } from '@todolist/shared'
+import { Controller } from 'react-hook-form'
 
 export function TodoForm({ onSubmit }) {
-  const input = useTodoInput(onSubmit)
+  const { form, submit, error } = useTodoForm(onSubmit)
 
   return (
     <View>
-      <TextInput
-        value={input.value}
-        onChangeText={input.setValue}
-        onSubmitEditing={() => void input.submit()}
+      <Controller
+        control={form.control}
+        name="title"
+        render={({ field }) => (
+          <TextInput
+            value={field.value}
+            onChangeText={field.onChange}
+            onBlur={field.onBlur}
+            onSubmitEditing={() => void submit()}
+          />
+        )}
       />
-      <Pressable onPress={() => void input.submit()}>
+      <Pressable onPress={() => void submit()}>
         <Text>Ajouter</Text>
       </Pressable>
-      {input.error && <Text>{input.error}</Text>}
+      {error && <Text>{error}</Text>}
     </View>
   )
 }
@@ -426,11 +442,13 @@ export function TodoForm({ onSubmit }) {
 Points à faire remarquer :
 
 - La **première ligne est la même** : le hook partagé.
-- La **deuxième ligne est la même** : `const input = useTodoInput(onSubmit)`.
+- La **deuxième ligne est la même** : `const { form, submit, error } = useTodoForm(onSubmit)`.
 - Tout le reste diffère, et c'est normal : c'est du rendu.
-- Détails plateforme : sur le web, `onChange` reçoit un événement (`e.target.value`) ; sur mobile,
-  `onChangeText` reçoit directement la chaîne. Sur le web, on soumet avec `<form onSubmit>` ; sur
-  mobile, il n'y a pas de formulaire, on écoute `onSubmitEditing` (la touche « OK » du clavier).
+- Le branchement du champ est **le** point de divergence de React Hook Form : `register` sur le web
+  (non contrôlé, via une ref DOM), `Controller` sur mobile (contrôlé, `value` / `onChangeText`).
+- Sur le web, on soumet avec `<form onSubmit={submit}>` et React Hook Form fait le `preventDefault`.
+  Sur mobile, il n'y a pas de formulaire : on appelle `submit()` depuis `onSubmitEditing` (la touche
+  « OK » du clavier) ou depuis le bouton.
 
 ### 5.2 Le composant racine
 
@@ -498,6 +516,7 @@ présentation.
 | Liste | `<ul>` + `.map()` | `<FlatList>` (virtualisée : ne rend que les éléments visibles) |
 | Rafraîchir | Bouton « Réessayer » | `RefreshControl` (tirer vers le bas) |
 | Formulaire | `<form onSubmit>` | N'existe pas : `onSubmitEditing` sur le champ |
+| Champ React Hook Form | `register('title')` (non contrôlé, ref DOM) | `<Controller>` (contrôlé, `value` / `onChangeText`) |
 | Style | CSS, classes, `prefers-color-scheme` | `StyleSheet.create({})`, objets JS, sous-ensemble de CSS (flexbox par défaut en colonne) |
 | Zones sûres | Rien | `SafeAreaView` (encoche, barre d'accueil) |
 | Clavier | Géré par le navigateur | `keyboardShouldPersistTaps`, `KeyboardAvoidingView` |
@@ -744,7 +763,8 @@ Quelques cas à faire classer :
 | Un hook `useDebounce` | Partagé | Seulement `useState` / `useEffect` |
 | Un hook `useLocalStorage` | Non partagé | `localStorage` n'existe pas sur mobile (c'est `AsyncStorage`) |
 | Un hook `useTodos` qui persiste en local | Séparer | Le hook prend un `storage` en paramètre ; chaque app fournit le sien |
-| Le schéma de validation d'un formulaire de login | Partagé | Zod |
+| Le schéma de validation d'un formulaire de login | Partagé | Yup |
+| La configuration `useForm` d'un formulaire de login | Partagé | React Hook Form ne dépend pas du rendu ; seul le branchement du champ (`register` / `Controller`) est par plateforme |
 | Le composant `<LoginForm>` | Non partagé | JSX + primitives différentes |
 | La navigation entre écrans | Non partagé | React Router contre React Navigation / Expo Router |
 | Un store Zustand / Redux | Partagé | Pas de dépendance au rendu |
@@ -862,8 +882,10 @@ cp apps/todolist-mob-app/.env.example apps/todolist-mob-app/.env.local     # EXP
 - **Expo** : un framework et un ensemble d'outils au-dessus de React Native (CLI, SDK, Expo Go).
 - **Expo Go** : l'app mobile qui charge votre bundle JS sans compiler de code natif. Parfait pour
   démarrer, limité dès qu'on ajoute un module natif non inclus.
-- **Zod** : bibliothèque de validation de schémas. Décrit une structure de données, la valide à
-  l'exécution et en déduit le type TypeScript.
+- **Yup** : bibliothèque de validation de schémas. Décrit une structure de données, la valide à
+  l'exécution et en déduit le type TypeScript (`InferType`).
+- **React Hook Form** : bibliothèque de gestion de formulaires basée sur les hooks. Sans dépendance
+  au DOM, elle fonctionne sur web et mobile ; `@hookform/resolvers` la relie à yup.
 - **Mise à jour optimiste** : modifier l'UI avant la réponse du serveur, puis annuler si le serveur
   refuse. Donne une impression d'instantanéité.
 - **Inversion de dépendance** : le code générique reçoit ce dont il a besoin en paramètre
